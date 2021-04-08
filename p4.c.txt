@@ -1,0 +1,208 @@
+#include "BituachLeumi.h"
+
+pCustomer custArray; 
+pDep depArray; 
+sem_t semM,allCust, mutexM,count;
+int custNum, clerkWorkT,inLine = 0,custDone = 0,depNum=0;;
+
+void* Modiin(void* C);
+void* Departs(void* C);
+
+int main(int argc,char *argv[])
+{	
+	FILE* in, * out;
+	int i, j, ans, clerksInDep = 0,clerkId=1001,totalTime = 0, tWaitTime = 0, tRunTime = 0;
+	float tTimeCust = 0, avgServTime = 0, avgClerkTime = 0;
+	struct timeval startP,clerkStart, clerkEnd, endP;
+
+	gettimeofday(&startP, NULL); //save the time the clerk finish to work
+
+	if(argc!=2){
+		printf("Wrong number of arguments");
+		exit(1);
+	}
+
+	in = fopen(argv[1], "r");
+	if (in == NULL) {
+		printf("Can't open data file");
+		exit(1);
+	}
+
+	out = fopen("out.txt", "w");
+	if (out == NULL) {
+		printf("Can't open out file");
+		exit(1);
+	}
+
+	sem_init(&semM, 0, 0);
+	sem_init(&allCust, 0, 0);
+	sem_init(&mutexM, 0, 1);
+	sem_init(&count, 0, 1);
+
+	fscanf(in, "%d", &depNum);
+	depArray = (Dep*)malloc(depNum*sizeof(Dep));//array of departments
+
+	for (i = 0; i < depNum; i++) {
+		fscanf(in, "%s%d", depArray[i].dep_serv,&depArray[i].clerksInDep); //insert data into each department
+		clerksInDep += depArray[i].clerksInDep; //count totatl clerks
+		depArray[i].clerks_array = (pClerk)malloc((depArray[i].clerksInDep) * sizeof(Clerk)); //array for each department
+		sem_init(&depArray[i].sem1, 0, 0);
+		sem_init(&depArray[i].sem2, 0, 1);
+		for (j = 0; j < depArray[i].clerksInDep; j++) 
+		{
+			depArray[i].clerks_array[j].id = clerkId;//getl clerk id
+			clerkId++;
+			strcpy(depArray[i].clerks_array[j].service,depArray[i].dep_serv);//get clerk service in string
+			depArray[i].clerks_array[j].intService=i;//get clerk service in int
+			depArray[i].clerks_array[j].clerk_num = j;//get clerk num
+			gettimeofday(&clerkStart, NULL);//clerk start time
+			if (strcmp(depArray[i].clerks_array[j].service, "Modiin") == 0) {//create modiin thread
+				ans = pthread_create(&depArray[i].clerks_array[j].tid, NULL,Modiin,(void*)&(depArray[i].clerks_array[j]));
+			}
+			else {//create other department thread
+				ans = pthread_create(&depArray[i].clerks_array[j].tid, NULL,Departs,(void*)&(depArray[i].clerks_array[j]));
+			}
+			if (ans == -1) 
+			{
+				perror("thread");
+			}
+
+			depArray[i].clerks_array[j].clerk_num = j;
+		}
+	}
+	fscanf(in, "%d", &custNum); 
+	custArray = (pCustomer)malloc(sizeof(Customer) * custNum); //customer array
+	for (i = 0; i < custNum; i++) 
+	{
+		fscanf(in, "%d%d%d%s%d", &custArray[i].id, &custArray[i].cust_next,&custArray[i].sort_time, custArray[i].service,&custArray[i].service_time);//get customer info
+		gettimeofday(&custArray[i].enter_time, NULL); //customer enter time
+		sem_post(&semM); //Modiiin let customer in
+		printf("The Customer %d is going to Modiin\n", i + 1);
+		usleep(custArray[i].cust_next * TM_CLOCK_TICK); //waiting next customer
+	}
+	sem_wait(&allCust); //wait for all customer's
+	gettimeofday(&clerkEnd, NULL); //save the time the clerks_array end their day
+	for (i = 0; i < depNum; i++)
+	{
+		for (j = 0; j < depArray[i].clerksInDep; j++)
+		{
+			pthread_kill(depArray[i].clerks_array[j].tid, NULL);//kill all threads
+		}
+	}
+	totalTime += (clerkEnd.tv_sec - clerkStart.tv_sec) * 1000.0; 
+	totalTime += (clerkEnd.tv_usec - clerkStart.tv_usec) / 1000.0;
+	gettimeofday(&endP, NULL);
+	tRunTime +=(endP.tv_sec - startP.tv_sec) * 1000.0; 
+	tRunTime +=(endP.tv_usec - startP.tv_usec) / 1000.0;
+	fprintf(out, "Total run time: %d seconds\n",tRunTime);
+	fprintf(out, "Total customers %d\n",custDone);
+	for (i = 0; i <depNum ; i++)
+	{
+		fprintf(out, "id            service      clerk_num    work          idle\n");//print to file clerk info
+		avgServTime = 0;
+		for (j = 0; j < depArray[i].clerksInDep; j++)
+		{
+			fprintf(out, "%d          %s          %d          %d          %d\n",depArray[i].clerks_array[j].id,depArray[i].clerks_array[j].service,depArray[i].clerks_array[j].clerk_num,depArray[i].clerks_array[j].work_time,(totalTime - depArray[i].clerks_array[j].work_time));
+			avgServTime += depArray[i].clerks_array[j].work_time;
+		}
+		avgClerkTime += avgServTime;
+		fprintf(out, "\nAverage work time for a clerk at %s: %.2f\n\n", avgServTime / depArray[i].clerksInDep,depArray[i].dep_serv);
+	}
+	fprintf(out, "Average work time for a clerk: %.2f\n\n", avgClerkTime / clerksInDep);
+	fprintf(out, "id             sort time     service time   elapse       wait\n"); //print to file customer info
+	for (i = 0; i < custNum; i++)
+	{
+		tTimeCust =tTimeCust+ custArray[i].total_time-custArray[i].wait_time;
+		tWaitTime +=custArray[i].wait_time;
+		fprintf(out, "%09d          %d          %d          %d          %d\n", custArray[i].id,custArray[i].sort_time, custArray[i].service_time,custArray[i].sort_time + custArray[i].service_time+ custArray[i].cust_next, custArray[i].wait_time);
+	}
+	fprintf(out, "\nAverage service time for a customer: %.2f\n", tTimeCust / (float)custNum);
+	fprintf(out, "\nAverage wait time for a cutomer: %.2f", (float)tWaitTime / (float)custNum);
+
+	//free all
+	for (i = 0; i < depNum; i++) {
+		free(depArray[i].clerks_array);
+	}
+	free(custArray);
+	free(depArray);
+
+
+	return 0;
+}
+
+void* Modiin(void* C)
+{
+	int i, custTurn, iClerk = (*(Clerk*)C).clerk_num;
+	int iService = (*(Clerk*)C).intService;
+	struct timeval start;
+	struct timeval end;
+
+	while (1)
+	{
+		sem_wait(&semM);
+		gettimeofday(&start, NULL);//start time
+		sem_wait(&mutexM);//only one thread can access the same time
+		custTurn = inLine;//next cust
+		inLine++;
+		sem_post(&mutexM);
+		usleep(custArray[custTurn].sort_time * TM_CLOCK_TICK);//sort time
+		for (i = 0; i < depNum; i++) {//create the line for each department
+			if (strcmp(depArray[i].dep_serv,
+				custArray[custTurn].service) == 0) {
+				if (depArray[i].tail != NULL) {
+					depArray[i].tail->next = &custArray[custTurn];
+				}
+				depArray[i].tail = &custArray[custTurn];
+				if (depArray[i].head == NULL) {
+					depArray[i].head = depArray[i].tail;
+				}
+				custArray[custTurn].next = NULL;
+				sem_post(&depArray[i].sem1);
+				printf("Modiin sent to department %s customer %d\n", depArray[i].dep_serv,custTurn + 1);
+				gettimeofday(&end, NULL);//end time
+				depArray[iService].clerks_array[iClerk].work_time +=(end.tv_sec - start.tv_sec) * 1000.0;
+				depArray[iService].clerks_array[iClerk].work_time +=(end.tv_usec - start.tv_usec) / 1000.0;
+				break;
+			}
+		}
+	}
+}
+
+void* Departs(void* C)
+{
+	pCustomer temp; //for free
+	int iClerk = (*(Clerk*)C).clerk_num;
+	int iService = (*(Clerk*)C).intService;;
+	int time = 0;
+	struct timeval start;
+	struct timeval end;
+
+	while (1)
+	{
+		sem_wait(&depArray[iService].sem1);
+		gettimeofday(&start, NULL); //start time
+		printf("Customer %d started getting service in %s from clerk %d\n",depArray[iService].head->id,depArray[iService].head->service,iClerk);
+		sem_wait(&depArray[iService].sem2);//only one can delete from the lsit at the same time
+		temp = depArray[iService].head;
+		depArray[iService].head =depArray[iService].head->next;
+		sem_post(&depArray[iService].sem2);
+		usleep(temp->service_time * TM_CLOCK_TICK);//service time
+		printf("Customer %d finished getting service in %s from clerk %d\n",temp->id,temp->service,iClerk);
+		gettimeofday(&temp->exit_time, NULL); //finish time
+		time = 0;//customer time
+		time += (temp->exit_time.tv_sec - temp->enter_time.tv_sec) * 1000.0; 
+		time += (temp->exit_time.tv_usec - temp->enter_time.tv_usec) / 1000.0;
+		temp->total_time = time;
+		temp->wait_time = temp->total_time - temp->sort_time - temp->service_time;
+		gettimeofday(&end, NULL);
+		depArray[iService].clerks_array[iClerk].work_time +=(end.tv_sec - start.tv_sec) * 1000.0;   
+		depArray[iService].clerks_array[iClerk].work_time +=(end.tv_usec - start.tv_usec) / 1000.0;
+		sem_wait(&count);//only one can update customer count at the same time and check if all customers got served
+		custDone++;		
+		if (custDone == custNum)
+		{
+			sem_post(&allCust);
+		}
+		sem_post(&count);
+	}
+}

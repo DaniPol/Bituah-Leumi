@@ -1,0 +1,77 @@
+/*
+ * BituachLeumi.h
+ *
+ *  Created on: May 28, 2020
+ *      Author: rsivan
+ */
+
+#ifndef BITUACHLEUMI_H_
+#define TM_BITUACHLEUMI_H_
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <time.h>
+#include <fcntl.h>
+#include <string.h>
+#include <semaphore.h>
+
+
+/*
+ * TM_CLOCK_TICK - the basic clock step (in microseconds)
+ *
+ * Relative times are multiplied by this factor to yield real running times
+ */
+#define TM_CLOCK_TICK  1000
+
+
+/**
+ * Customer is a struct for keeping all customer related information.
+ */
+typedef struct customer
+{
+    int         	 id;
+    char         	 service[100];
+    int        		 cust_next;
+    int        		 sort_time;
+    int          	 service_time;
+    struct timeval   enter_time;
+    struct timeval   exit_time;
+    int         	 wait_time;
+    int      		 total_time;
+    struct customer *next;
+}
+    Customer,
+   *pCustomer;
+
+
+/*
+ * Clerk is a struct for keeping all clerk related information
+ */
+typedef struct clerk
+{
+    int       id;
+    pthread_t tid;
+    char      service[100];
+    int		  intService;
+    int       work_time;
+    int 	  param_arr[2];//parameters for the funcs of the threads
+    int       clerk_num;
+}
+Clerk, *pClerk;
+
+
+typedef struct department {
+	char dep_serv[100];
+	int clerksInDep;
+	Clerk* clerks_array;
+	pCustomer head;
+	pCustomer tail;
+	sem_t sem1,sem2;
+
+} Dep,*pDep;
+
+
+
+#endif /* BITUACHLEUMI_H_ */
